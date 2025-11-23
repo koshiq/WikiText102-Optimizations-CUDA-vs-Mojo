@@ -8,7 +8,7 @@ import argparse
 import torch
 
 import data
-from model import PositionalEncoding, RNNModel, TransformerModel
+from model import PositionalEncoding, TransformerModel
 
 parser = argparse.ArgumentParser(description='PyTorch Wikitext-2 Language Model')
 # Model parameters.
@@ -45,7 +45,6 @@ if args.temperature < 1e-3:
 with open(args.checkpoint, 'rb') as f:
     safe_globals = [
         PositionalEncoding,
-        RNNModel,
         TransformerModel,
         torch.nn.functional.relu,
         torch.nn.modules.activation.MultiheadAttention,
@@ -55,9 +54,6 @@ with open(args.checkpoint, 'rb') as f:
         torch.nn.modules.linear.NonDynamicallyQuantizableLinear,
         torch.nn.modules.normalization.LayerNorm,
         torch.nn.modules.sparse.Embedding,
-        torch.nn.modules.rnn.GRU,
-        torch.nn.modules.rnn.LSTM,
-        torch.nn.modules.rnn.RNN,
         torch.nn.modules.transformer.TransformerEncoder,
         torch.nn.modules.transformer.TransformerEncoderLayer,
     ]
