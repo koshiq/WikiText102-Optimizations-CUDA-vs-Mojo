@@ -1,7 +1,2 @@
 torch>=2.6
 psutil>=5.9.0
-
-# Optional: For Mojo kernel optimization
-# Uncomment and install MAX Engine first
-# See setup_mojo.sh or MOJO_INTEGRATION.md for instructions
-# max>=24.6
