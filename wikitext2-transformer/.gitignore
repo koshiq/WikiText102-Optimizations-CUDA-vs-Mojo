@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+
+# Model files
+*.pt
+*.pth
+*.onnx
+
+# Profiling outputs
+*.nsys-rep
+*.sqlite
+*.qdrep
+*.json
+trace_*.json
+profiler_stacks*.txt
+*.html
+
+# Data
+data/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log

@@ -8,6 +8,12 @@ import torch.nn as nn
 import torch.onnx
 
 import data
+# Import Mojo-optimized model if requested
+try:
+    from mojo.model_mojo import TransformerModel as MojoTransformerModel
+    MOJO_AVAILABLE = True
+except ImportError:
+    MOJO_AVAILABLE = False
 from model import PositionalEncoding, TransformerModel
 
 parser = argparse.ArgumentParser(description='PyTorch Wikitext-2 Transformer Language Model')
@@ -45,6 +51,8 @@ parser.add_argument('--accel', action='store_true',
                     help='Enables accelerated training')
 parser.add_argument('--use-optimizer', action='store_true',
                     help='Uses AdamW optimizer for gradient updating')
+parser.add_argument('--use-mojo', action='store_true',
+                    help='Use Mojo-optimized kernels instead of PyTorch CUDA')
 args = parser.parse_args()
 
 # Set the random seed manually for reproducibility.
@@ -95,7 +103,17 @@ test_data = batchify(corpus.test, eval_batch_size)
 ###############################################################################
 
 ntokens = len(corpus.dictionary)
-model = TransformerModel(ntokens, args.emsize, args.nhead, args.nhid, args.nlayers, args.dropout).to(device)
+
+# Use Mojo-optimized model if requested
+if args.use_mojo:
+    if not MOJO_AVAILABLE:
+        print("Warning: Mojo model not available, falling back to standard PyTorch")
+        model = TransformerModel(ntokens, args.emsize, args.nhead, args.nhid, args.nlayers, args.dropout).to(device)
+    else:
+        print("Using Mojo-optimized TransformerModel")
+        model = MojoTransformerModel(ntokens, args.emsize, args.nhead, args.nhid, args.nlayers, args.dropout, use_mojo=True).to(device)
+else:
+    model = TransformerModel(ntokens, args.emsize, args.nhead, args.nhid, args.nlayers, args.dropout).to(device)
 
 criterion = nn.NLLLoss()
 if args.use_optimizer:

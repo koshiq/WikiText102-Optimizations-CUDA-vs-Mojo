@@ -1,0 +1,14 @@
+FROM python:3.12-slim
+
+WORKDIR /app
+
+# Install dependencies
+RUN pip install --no-cache-dir modal torch>=2.6 psutil>=5.9.0
+
+# Copy project files
+COPY . .
+
+# Set Python 3.12 as default
+ENV PYTHON=/usr/local/bin/python3.12
+
+CMD ["bash"]

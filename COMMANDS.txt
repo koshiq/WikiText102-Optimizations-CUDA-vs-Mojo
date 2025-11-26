@@ -1,0 +1,82 @@
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  WikiText-2 Transformer - Quick Command Reference
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+## LOCAL TRAINING
+
+# CPU
+python main.py --data ./data/wikitext-2
+
+# GPU (PyTorch CUDA)
+python main.py --data ./data/wikitext-2 --accel
+
+# GPU (Mojo optimized)
+python main.py --data ./data/wikitext-2 --accel --use-mojo
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+## MODAL A100 DEPLOYMENT
+
+# Setup (one-time)
+export MODULAR_API_KEY="your-key"
+modal secret create modular-api-key MODULAR_API_KEY=$MODULAR_API_KEY
+
+# Benchmark Mojo vs CUDA kernels
+modal run modal_train.py --mode=mojo-benchmark
+
+# Train with PyTorch CUDA
+modal run modal_train.py --mode=train --use-mojo=False --epochs=40
+
+# Train with Mojo kernels
+modal run modal_train.py --mode=train --use-mojo=True --epochs=40
+
+# Full benchmark comparison
+modal run modal_train.py --mode=benchmark --use-mojo=True --epochs=5 --runs=3
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+## PROFILING
+
+# PyTorch profiler
+python profile_model.py --profile-batches 100 --accel
+
+# GPU profiling (Nsight Systems)
+cd cuda
+nsys profile --trace=cuda,nvtx --output=gpu.nsys-rep python profile_model_gpu.py
+nsys stats gpu.nsys-rep
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+## BENCHMARKING
+
+# Kernel benchmarks (local)
+cd mojo
+python benchmark_mojo_vs_cuda.py --iterations=100
+
+# End-to-end benchmarks
+python benchmark.py --epochs=5 --runs=3 --accel
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+## TEXT GENERATION
+
+python generate.py --checkpoint model.pt --words 1000
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+## PROJECT STRUCTURE
+
+pytorch_language_model/
+├── README.md              ← Full documentation
+├── modal_train.py         ← A100 deployment
+└── wikitext2-transformer/
+    ├── main.py            ← Training
+    ├── model.py           ← PyTorch model
+    ├── mojo/              ← Mojo optimization
+    │   ├── mojo_ops.py
+    │   ├── model_mojo.py
+    │   └── benchmark_mojo_vs_cuda.py
+    └── cuda/              ← CUDA tools
+        └── profile_model_gpu.py
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
