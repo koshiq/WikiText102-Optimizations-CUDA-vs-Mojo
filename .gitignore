@@ -46,3 +46,21 @@ Thumbs.db
 # Data files (optional - uncomment if you don't want to track large data files)
 # *.txt
 # data/
+
+# Profiling/trace outputs
+*.json
+trace_*.json
+*.nsys-rep
+*.sqlite
+*.qdrep
+profiler_stacks*.txt
+*.html
+
+# Model checkpoints
+*.pt
+*.pth
+*.onnx
+
+# Benchmark outputs
+benchmark_results*.json
+mojo_benchmark.json
