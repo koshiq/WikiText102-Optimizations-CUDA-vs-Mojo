@@ -152,9 +152,11 @@ struct GEMMKernel:
     fn _compute_tile(
         smem_A: UnsafePointer[Float16],
         smem_B: UnsafePointer[Float16],
-        mut acc: UnsafePointer[Float32],
+        acc: UnsafePointer[Float32],
         k_size: Int
     ):
+        # Make a mutable view of the accumulator buffer
+        var acc_mut = acc.mut_cast[True]()
 
         for k in range(k_size):
             for m in range(THREAD_M):
@@ -166,11 +168,10 @@ struct GEMMKernel:
                     var b_offset = k * (TILE_N + SMEM_PAD) + n
                     var b_val: Float32 = (smem_B + b_offset)[].cast[DType.float32]()
 
-
-
                     var idx = m * THREAD_N + n
-                    var old = (acc + idx)[]
-                    (acc + idx)[] = old + a_val * b_val
+                    var old = (acc_mut + idx)[]          # read
+                    (acc_mut + idx)[] = old + a_val * b_val   # write OK now
+
 
 
     # ============================================================
