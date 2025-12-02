@@ -180,31 +180,36 @@ struct GEMMKernel:
 
     @staticmethod
     fn _store_tile_C(
-        mut C: UnsafePointer[Float32],
+        C: UnsafePointer[Float32],
         acc: UnsafePointer[Float32],
         M: Int, N: Int, ldc: Int,
         block_m: Int, block_n: Int,
         alpha: Float32, beta: Float32
     ):
+        # Make a mutable view of C
+        var C_mut = C.mut_cast[True]()
 
         for m in range(THREAD_M):
             var g_m = block_m + m
-            if g_m >= M: continue
+            if g_m >= M:
+                continue
 
             for n in range(THREAD_N):
 
                 var g_n = block_n + n
-                if g_n >= N: continue
+                if g_n >= N:
+                    continue
 
                 var c_idx = g_m * ldc + g_n
                 var acc_val = (acc + (m * THREAD_N + n))[]
 
-                var dst = C + c_idx
+                var dst = C_mut + c_idx      # use mutable pointer here
 
                 if beta == 0.0:
                     dst[] = alpha * acc_val
                 else:
                     dst[] = alpha * acc_val + beta * dst[]
+
 
 
 
