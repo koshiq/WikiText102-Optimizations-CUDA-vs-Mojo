@@ -87,24 +87,30 @@ struct GEMMKernel:
     @staticmethod
     fn _load_tile_A(
         A: UnsafePointer[Float16],
-        mut smem_A: UnsafePointer[Float16],
+        smem_A: UnsafePointer[Float16],
         M: Int, K: Int, lda: Int,
         block_m: Int, k_tile: Int, k_size: Int
     ):
+        # Changed 'let' to 'var' and fixed indentation
+        var smem_A_mut = smem_A.mut_cast[True]()
 
         for m in range(TILE_M):
             var g_m = block_m + m
 
             for k in range(k_size):
 
-                var dest = smem_A + (m * (TILE_K + SMEM_PAD) + k)
+                # Changed 'let' to 'var' to make the local 'dest' pointer binding mutable
+                var dest = smem_A_mut + (m * (TILE_K + SMEM_PAD) + k)
 
                 if g_m >= M:
-                    dest[] = 0.0
+                    dest[] = 0.0          
                 else:
+                    # Changed 'let' to 'var' for consistency/compatibility
                     var g_k = k_tile + k
+                    # Changed 'let' to 'var' for consistency/compatibility
                     var val = (A + (g_m * lda + g_k))[]
                     dest[] = val
+
 
 
     # ============================================================
@@ -114,16 +120,19 @@ struct GEMMKernel:
     @staticmethod
     fn _load_tile_B(
         B: UnsafePointer[Float16],
-        mut smem_B: UnsafePointer[Float16],
+        smem_B: UnsafePointer[Float16],
         K: Int, N: Int, ldb: Int,
         k_tile: Int, block_n: Int, k_size: Int
     ):
+        # Convert smem_B into a mutable pointer
+        var smem_B_mut = smem_B.mut_cast[True]()
 
         for k in range(k_size):
 
             for n in range(TILE_N):
 
-                var dest = smem_B + (k * (TILE_N + SMEM_PAD) + n)
+                # Must use the mutable pointer, not smem_B
+                var dest = smem_B_mut + (k * (TILE_N + SMEM_PAD) + n)
 
                 var g_k = k_tile + k
                 var g_n = block_n + n
@@ -132,6 +141,7 @@ struct GEMMKernel:
                     dest[] = 0.0
                 else:
                     dest[] = (B + (g_k * ldb + g_n))[]
+
 
 
     # ============================================================
