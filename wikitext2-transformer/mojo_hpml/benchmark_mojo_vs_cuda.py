@@ -8,6 +8,9 @@ import time
 import json
 import torch
 import torch.nn as nn
+import max
+# max.init_kernels("mojo/mojo_kernels/layernorm.mojopkg")
+
 from mojo_ops import (
     MojoGEMM, MojoSoftmax, MojoLogSoftmax, MojoLayerNorm,
     benchmark_op, MOJO_AVAILABLE
@@ -171,12 +174,38 @@ if __name__ == '__main__':
         exit(1)
 
     # Check device
-    device = torch.device(args.device)
+    # device = torch.device(args.device)
+    def get_best_device():
+        # CUDA first (Modal A100 + NVIDIA laptops)
+        if torch.cuda.is_available():
+            return torch.device("cuda")
+
+        # MPS second (Mac M1/M2/M3/M4)
+        if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            return torch.device("mps")
+
+        # CPU fallback
+        return torch.device("cpu")
+
+    device = get_best_device()
+    print(f"Using device: {device}")
+
     print(f"\nDevice: {device}")
 
-    if device.type == 'cuda':
+    # if device.type == 'cuda':
+    #     print(f"GPU: {torch.cuda.get_device_name(0)}")
+    #     print(f"CUDA Version: {torch.version.cuda}")
+
+    if device.type == "cuda":
         print(f"GPU: {torch.cuda.get_device_name(0)}")
-        print(f"CUDA Version: {torch.version.cuda}")
+        print(f"CUDA version: {torch.version.cuda}")
+
+    elif device.type == "mps":
+        print("MPS device detected (Apple Silicon)")
+
+    else:
+        print("CPU device detected")
+
 
     print(f"\nTest Configuration:")
     print(f"  Batch size: {args.batch_size}")

@@ -1,174 +1,133 @@
 """
-Modal deployment script for training WikiText-2 Transformer on A100 GPU.
+Modal deployment script for WikiText-2 Transformer on A100 GPU.
 
-This script runs the training on Modal's cloud infrastructure with A100 GPU support.
+Includes:
+ - Mojo stdlib fix (copy to MOJO_PATH so mojo.paths loads correctly)
+ - Full deep diagnostics (env vars, sys.path, filesystem map)
+ - Correct heredoc import verification in subprocess
+ - Actual benchmark execution & result parsing
+ - Forced rebuild marker so Modal does NOT cache bad images
 """
 
-import modal
+import os
+import sys
+import subprocess
+import json
+from modal import App, Image, gpu
 
-# Create a Modal app
-app = modal.App("wikitext2-transformer-training")
+app = App("wikitext2-transformer-training")
 
-# Define the image with all dependencies including MAX Engine
+# =====================================================================
+# PATH CONSTANTS
+# =====================================================================
+PIXI_ROOT = "/root/mojo_project"
+PIXI_ENV  = f"{PIXI_ROOT}/.pixi/envs/default"
+SITE_PACKAGES = f"{PIXI_ENV}/lib/python3.13/site-packages"
+
+MOJO_SITE   = f"{SITE_PACKAGES}/mojo"
+MOJO_PATH   = f"{PIXI_ENV}/lib/mojo"
+MOJO_TARGET = f"{MOJO_PATH}/mojo"    # copy entire mojo stdlib here
+
+PROJECT_ROOT = "/root/wikitext2-transformer"
+
+# =====================================================================
+# IMAGE BUILD
+# =====================================================================
+
 image = (
-    modal.Image.debian_slim(python_version="3.11")
-    .apt_install("wget", "build-essential")
+    Image.debian_slim(python_version="3.13")
+    .apt_install("curl", "git", "rsync", "build-essential")
     .run_commands(
-        # Install MAX Engine for Mojo kernels
-        "wget -qO- https://get.modular.com | sh -",
-        "modular auth $MODULAR_API_KEY",
-        "modular install max",
+        "echo 'REBUILD_TRIGGER: 2025-12-02'",
+
+        # Install pixi
+        "curl -fsSL https://pixi.sh/install.sh -o /tmp/install_pixi.sh",
+        "bash /tmp/install_pixi.sh",
+
+        # Create pixi project
+        f"mkdir -p {PIXI_ROOT}",
+
+        # Init pixi with MAX channel
+        f"export PATH=$HOME/.pixi/bin:$PATH && cd {PIXI_ROOT} && "
+        f"pixi init -c https://conda.modular.com/max-nightly -c conda-forge",
+
+        # Install Pixi environment: Python 3.13 + pillow + modular (MAX runtime)
+        f"export PATH=$HOME/.pixi/bin:$PATH && cd {PIXI_ROOT} && "
+        f"pixi add python==3.13 pillow>=11.0.0 modular pip setuptools wheel",
+
+        f"{PIXI_ENV}/bin/python -m pip install --upgrade pip",
+        f"{PIXI_ENV}/bin/pip install torch==2.9.1 torchvision==0.24.1",
+
+
+        # ---------------------------------------------------------
+        # 3. Copy Mojo stdlib into MAX runtime path
+        # ---------------------------------------------------------
+        f"mkdir -p {MOJO_TARGET}",
+        f"rsync -av {MOJO_SITE}/ {MOJO_TARGET}/",
+
+        # ---------------------------------------------------------
+        # 4. Verify MAX + Mojo load successfully
+        # ---------------------------------------------------------
+        f"{PIXI_ENV}/bin/python -c 'import max, mojo.paths; print(\"[BUILD] MAX + Mojo OK\")'"
     )
-    .pip_install(
-        "torch>=2.6",
-        "psutil>=5.9.0",
-        "max>=24.6",  # MAX Engine Python package
-    )
-    .env({"MAX_ENABLE_GPU": "1"})  # Enable GPU for MAX Engine
+
+
+
+# works with my cpu
+# image = (
+#     Image.debian_slim(python_version="3.13")
+#     .apt_install("curl", "git", "rsync", "build-essential")
+#     .run_commands(
+#         # 🔥 FORCE REBUILD MARKER — MODIFY THIS COMMENT TO REBUILD
+#         "echo 'REBUILD_TRIGGER: 2025-12-01'",
+
+#         # Install pixi
+#         "curl -fsSL https://pixi.sh/install.sh -o /tmp/install_pixi.sh",
+#         "bash /tmp/install_pixi.sh",
+
+#         # Create pixi project
+#         f"mkdir -p {PIXI_ROOT}",
+
+#         # Init pixi environment with Modular MAX channel
+#         f"export PATH=$HOME/.pixi/bin:$PATH && cd {PIXI_ROOT} && "
+#         f"pixi init -c https://conda.modular.com/max-nightly -c conda-forge",
+
+#         # Install core components inside pixi env
+#         # f"export PATH=$HOME/.pixi/bin:$PATH && cd {PIXI_ROOT} && pixi add python==3.11",
+#         f"export PATH=$HOME/.pixi/bin:$PATH && cd {PIXI_ROOT} && pixi add python==3.13 pillow>=11.0.0",
+#         f"export PATH=$HOME/.pixi/bin:$PATH && cd {PIXI_ROOT} && pixi add modular",
+#         # f"export PATH=$HOME/.pixi/bin:$PATH && cd {PIXI_ROOT} && pixi add pytorch",
+#         # Add the specific CUDA runtime libraries that PyTorch uses
+#         # f"export PATH=$HOME/.pixi/bin:$PATH && cd {PIXI_ROOT} && pixi add cuda-version=12.1",
+
+#         # Add the pytorch package that is built against the above cuda version
+#         f"export PATH=$HOME/.pixi/bin:$PATH && cd {PIXI_ROOT} && pixi add pytorch",
+
+
+#         # Copy Mojo standard library to MAX runtime location
+#         f"mkdir -p {MOJO_TARGET}",
+#         f"rsync -av {MOJO_SITE}/ {MOJO_TARGET}/",
+
+#         # Build-time verification
+#         f"export PATH=$HOME/.pixi/bin:$PATH && cd {PIXI_ROOT} && "
+#         f"pixi run python -c 'import max, mojo.paths; print(\"[BUILD] MAX + Mojo OK\")'"
+#     )
+    .env({
+        "MAX_ENABLE_GPU": "1",
+        "PATH": f"/root/.pixi/bin:{PIXI_ENV}/bin:/usr/local/bin:/usr/bin:/bin",
+        "PYTHONPATH": f"{SITE_PACKAGES}:{PROJECT_ROOT}:{PROJECT_ROOT}/mojo_hpml:{MOJO_PATH}",
+        "LD_LIBRARY_PATH": f"{PIXI_ENV}/lib",
+        "MODULAR_HOME": PIXI_ENV,
+        "MAX_HOME": PIXI_ENV,
+        "MOJO_PATH": MOJO_PATH,
+    })
+    .add_local_dir("./wikitext2-transformer", remote_path=PROJECT_ROOT)
 )
 
-# Mount the local code directory
-code_mount = modal.Mount.from_local_dir(
-    "./wikitext2-transformer",
-    remote_path="/root/wikitext2-transformer"
-)
-
-@app.function(
-    image=image,
-    gpu=modal.gpu.A100(count=1, size="40GB"),  # Use A100 40GB GPU
-    mounts=[code_mount],
-    timeout=3600 * 4,  # 4 hours timeout
-    secrets=[modal.Secret.from_name("modular-api-key")],  # Modular API key for MAX Engine
-)
-def train_model(
-    epochs: int = 40,
-    batch_size: int = 20,
-    emsize: int = 200,
-    nhid: int = 200,
-    nlayers: int = 4,
-    nhead: int = 2,
-    lr: float = 20.0,
-    dropout: float = 0.2,
-    use_optimizer: bool = True,
-    use_mojo: bool = True,
-):
-    """
-    Train the Transformer language model on WikiText-2 dataset.
-
-    Args:
-        epochs: Number of training epochs
-        batch_size: Batch size for training
-        emsize: Size of word embeddings
-        nhid: Number of hidden units per layer
-        nlayers: Number of transformer layers
-        nhead: Number of attention heads
-        lr: Initial learning rate
-        dropout: Dropout rate
-        use_optimizer: Whether to use AdamW optimizer
-        use_mojo: Whether to use Mojo-optimized kernels
-    """
-    import sys
-    import os
-    import subprocess
-
-    # Change to the code directory
-    os.chdir("/root/wikitext2-transformer")
-
-    # Build command
-    cmd = [
-        "python", "main.py",
-        "--data", "./data/wikitext-2",
-        "--epochs", str(epochs),
-        "--batch_size", str(batch_size),
-        "--emsize", str(emsize),
-        "--nhid", str(nhid),
-        "--nlayers", str(nlayers),
-        "--nhead", str(nhead),
-        "--lr", str(lr),
-        "--dropout", str(dropout),
-        "--save", "/root/model.pt",
-        "--accel",  # Enable GPU acceleration
-    ]
-
-    if use_optimizer:
-        cmd.append("--use-optimizer")
-
-    if use_mojo:
-        cmd.append("--use-mojo")
-
-    print(f"Running command: {' '.join(cmd)}")
-    print("="*80)
-
-    # Run training
-    result = subprocess.run(cmd, capture_output=False, text=True)
-
-    if result.returncode != 0:
-        raise RuntimeError(f"Training failed with return code {result.returncode}")
-
-    # Read and return the trained model
-    with open("/root/model.pt", "rb") as f:
-        model_bytes = f.read()
-
-    return model_bytes
-
-
-@app.function(
-    image=image,
-    gpu=modal.gpu.A100(count=1, size="40GB"),
-    mounts=[code_mount],
-    timeout=3600,
-)
-def benchmark_model(
-    epochs: int = 5,
-    runs: int = 3,
-    batch_size: int = 20,
-):
-    """
-    Run comprehensive benchmarks on the model.
-
-    Args:
-        epochs: Number of epochs to benchmark
-        runs: Number of benchmark runs for averaging
-        batch_size: Batch size for benchmarking
-    """
-    import subprocess
-    import json
-    import os
-
-    os.chdir("/root/wikitext2-transformer")
-
-    cmd = [
-        "python", "benchmark.py",
-        "--data", "./data/wikitext-2",
-        "--epochs", str(epochs),
-        "--runs", str(runs),
-        "--batch_size", str(batch_size),
-        "--output", "/root/benchmark_results.json",
-        "--accel",
-    ]
-
-    print(f"Running benchmark: {' '.join(cmd)}")
-    print("="*80)
-
-    result = subprocess.run(cmd, capture_output=False, text=True)
-
-    if result.returncode != 0:
-        raise RuntimeError(f"Benchmark failed with return code {result.returncode}")
-
-    # Read and return results
-    with open("/root/benchmark_results.json", "r") as f:
-        results = json.load(f)
-
-    return results
-
-
-@app.function(
-    image=image,
-    gpu=modal.gpu.A100(count=1, size="40GB"),
-    mounts=[code_mount],
-    timeout=3600,
-    secrets=[modal.Secret.from_name("modular-api-key")],
-)
+# =====================================================================
+# FUNCTION: FULL DEBUG + REAL BENCHMARK
+# =====================================================================
+@app.function(image=image, gpu="A100-40GB", timeout=3600)
 def benchmark_mojo_vs_cuda(
     batch_size: int = 20,
     seq_len: int = 35,
@@ -176,201 +135,172 @@ def benchmark_mojo_vs_cuda(
     warmup: int = 10,
     iterations: int = 100,
 ):
-    """
-    Benchmark Mojo kernels vs PyTorch CUDA.
 
-    Args:
-        batch_size: Batch size for testing
-        seq_len: Sequence length
-        hidden_size: Hidden dimension
-        warmup: Warmup iterations
-        iterations: Benchmark iterations
-    """
-    import subprocess
-    import json
+    print("=" * 80)
+    print("🔧 MAX + MOJO ENVIRONMENT CHECK")
+    print("=" * 80)
+
+    # -----------------------------------------------------------------
+    # 1. Print ALL environment variables
+    # -----------------------------------------------------------------
+    print("\n📌 ENVIRONMENT VARIABLES:")
+    for key in ["PATH", "PYTHONPATH", "LD_LIBRARY_PATH", "MODULAR_HOME", "MOJO_PATH"]:
+        print(f"{key}: {os.environ.get(key)}")
+
+    # -----------------------------------------------------------------
+    # 2. sys.path
+    # -----------------------------------------------------------------
+    print("\n📌 sys.path in MAIN PROCESS:")
+    for i, p in enumerate(sys.path):
+        print(f"  [{i}] {p}")
+
+    # -----------------------------------------------------------------
+    # 3. Filesystem diagnostics
+    # -----------------------------------------------------------------
+    print("\n📌 FILESYSTEM CHECK:")
+    paths = [
+        (MOJO_SITE, "MOJO stdlib exists"),
+        (MOJO_PATH, "MOJO_PATH exists"),
+        (MOJO_TARGET, "MOJO_TARGET exists"),
+        (f"{MOJO_TARGET}/paths.py", "mojo.paths exists"),
+    ]
+    for p, name in paths:
+        print(f"{name}: {os.path.exists(p)}")
+
+    # -----------------------------------------------------------------
+    # 4. Deep subprocess import test using HEREDOC
+    # -----------------------------------------------------------------
+    print("\n📌 Running subprocess import check...")
+    CHECK = r"""
+import sys, os, pkgutil, importlib, importlib.util
+
+print("=== PYTHON EXECUTABLE ===")
+print(sys.executable)
+print()
+
+print("=== sys.prefix ===")
+print(sys.prefix)
+print()
+
+print("=== sys.path ===")
+for i,p in enumerate(sys.path):
+    print(f"[{i}] {p}")
+print()
+
+print("=== Searching for 'mojo_hpml' package ===")
+mojo_spec = importlib.util.find_spec("mojo_hpml")
+print("mojo_spec:", mojo_spec)
+print("origin:", getattr(mojo_spec, 'origin', None))
+print("submodule_search_locations:", getattr(mojo_spec, 'submodule_search_locations', None))
+print()
+
+print("=== CONTENTS OF mojo_hpml package directory ===")
+if mojo_spec and mojo_spec.submodule_search_locations:
     import os
+    for loc in mojo_spec.submodule_search_locations:
+        print("DIR:", loc)
+        try:
+            print(os.listdir(loc))
+        except Exception as e:
+            print("ERROR listing:", e)
+print()
 
-    os.chdir("/root/wikitext2-transformer")
+print("=== Trying: import mojo_hpml ===")
+import mojo_hpml
+print("mojo_hpml module:", mojo_hpml)
+print("mojo_hpml.__file__:", getattr(mojo_hpml, '__file__', None))
+print("mojo_hpml.__path__:", getattr(mojo_hpml, '__path__', None))
+print()
+"""
 
-    cmd = [
-        "python", "-m", "mojo.benchmark_mojo_vs_cuda",
+
+
+    heredoc = f"""python3 - << 'EOF'
+{CHECK}
+EOF
+"""
+
+    proc = subprocess.run(
+        heredoc,
+        shell=True,
+        text=True,
+        capture_output=True,
+        env=os.environ.copy(),
+    )
+
+    print("\n📤 Subprocess STDOUT:")
+    print(proc.stdout)
+
+    if proc.stderr:
+        print("\n📥 Subprocess STDERR:")
+        print(proc.stderr)
+
+    if proc.returncode != 0:
+        print("\n❌ Environment FAILED")
+        raise RuntimeError("Environment setup failed")
+
+    print("\n✅ Environment OK (mojo.paths import works!)")
+
+    # -----------------------------------------------------------------
+    # 5. RUN THE ACTUAL BENCHMARK
+    # -----------------------------------------------------------------
+    print("\n🚀 Running benchmark...")
+
+    benchmark_script = f"{PROJECT_ROOT}/mojo_hpml/benchmark_mojo_vs_cuda.py"
+    output_file = "/root/mojo_benchmark.json"
+
+    bench_cmd = [
+        "python3",
+        # "/usr/local/bin/python3",
+        benchmark_script,
         "--device", "cuda",
         "--batch-size", str(batch_size),
         "--seq-len", str(seq_len),
         "--hidden-size", str(hidden_size),
         "--warmup", str(warmup),
         "--iterations", str(iterations),
-        "--output", "/root/mojo_benchmark.json",
+        "--output", output_file,
     ]
 
-    print(f"Running Mojo vs CUDA benchmark: {' '.join(cmd)}")
-    print("="*80)
+    try:
+        subprocess.run(bench_cmd, check=True, env=os.environ.copy())
+    except subprocess.CalledProcessError as e:
+        print("❌ Benchmark crashed!")
+        print("STDOUT:", e.stdout)
+        print("STDERR:", e.stderr)
+        raise
 
-    result = subprocess.run(cmd, capture_output=False, text=True)
+    # -----------------------------------------------------------------
+    # 6. RETURN RESULTS
+    # -----------------------------------------------------------------
+    if os.path.exists(output_file):
+        with open(output_file) as f:
+            return json.load(f)
 
-    if result.returncode != 0:
-        raise RuntimeError(f"Benchmark failed with return code {result.returncode}")
+    return {"error": "Benchmark output not found", "summary": {}}
 
-    # Read and return results
-    with open("/root/mojo_benchmark.json", "r") as f:
-        results = json.load(f)
-
-    return results
-
-
-@app.function(
-    image=image,
-    gpu=modal.gpu.A100(count=1, size="40GB"),
-    mounts=[code_mount],
-    timeout=3600,
-    secrets=[modal.Secret.from_name("modular-api-key")],
-)
-def profile_model(profile_batches: int = 100):
-    """
-    Profile the model to identify performance bottlenecks.
-
-    Args:
-        profile_batches: Number of batches to profile
-    """
-    import subprocess
-    import os
-
-    os.chdir("/root/wikitext2-transformer")
-
-    cmd = [
-        "python", "-m", "cuda.profile_model_gpu",
-        "--data", "./data/wikitext-2",
-        "--profile-batches", str(profile_batches),
-    ]
-
-    print(f"Running profiler: {' '.join(cmd)}")
-    print("="*80)
-
-    result = subprocess.run(cmd, capture_output=False, text=True)
-
-    if result.returncode != 0:
-        raise RuntimeError(f"Profiling failed with return code {result.returncode}")
-
-    # Read profiling traces
-    traces = {}
-    if os.path.exists("/root/wikitext2-transformer/trace_training.json"):
-        with open("/root/wikitext2-transformer/trace_training.json", "r") as f:
-            traces["training"] = f.read()
-
-    if os.path.exists("/root/wikitext2-transformer/trace_inference.json"):
-        with open("/root/wikitext2-transformer/trace_inference.json", "r") as f:
-            traces["inference"] = f.read()
-
-    if os.path.exists("/root/wikitext2-transformer/profiler_stacks.txt"):
-        with open("/root/wikitext2-transformer/profiler_stacks.txt", "r") as f:
-            traces["stacks"] = f.read()
-
-    return traces
-
-
+# =====================================================================
+# LOCAL ENTRYPOINT
+# =====================================================================
 @app.local_entrypoint()
-def main(
-    mode: str = "train",
-    epochs: int = 40,
-    batch_size: int = 20,
-    runs: int = 3,
-    use_mojo: bool = False,
-):
-    """
-    Local entrypoint for running Modal functions.
+def main(mode: str = "mojo-benchmark"):
+    print(f"Running in {mode} mode...")
 
-    Args:
-        mode: Operation mode: 'train', 'benchmark', 'profile', or 'mojo-benchmark'
-        epochs: Number of epochs
-        batch_size: Batch size
-        runs: Number of benchmark runs (for benchmark mode)
-        use_mojo: Whether to use Mojo-optimized kernels
-    """
-    print(f"Running in {mode} mode on Modal A100 GPU...")
-    if use_mojo:
-        print("Mojo kernels enabled")
+    if mode == "mojo-benchmark":
+        results = benchmark_mojo_vs_cuda.remote()
 
-    if mode == "train":
-        print("Starting training...")
-        model_bytes = train_model.remote(
-            epochs=epochs,
-            batch_size=batch_size,
-            use_mojo=use_mojo,
-        )
+        print("\n======= BENCHMARK COMPLETE =======")
+        if "error" in results:
+            print("❌ Error:", results["error"])
+            return
 
-        # Save model locally
-        output_path = "./model_a100.pt"
-        with open(output_path, "wb") as f:
-            f.write(model_bytes)
-        print(f"\nModel saved to {output_path}")
-        print(f"Model size: {len(model_bytes) / 1024 / 1024:.2f} MB")
+        # Summary printout
+        summary = results.get("summary", {})
+        print("\n=== MOJO VS CUDA SUMMARY ===")
+        print(f"Total Mojo Time:    {summary.get('total_mojo_time_ms', 0):.3f} ms")
+        print(f"Total PyTorch Time: {summary.get('total_pytorch_time_ms', 0):.3f} ms")
+        print(f"Overall Speedup:    {summary.get('overall_speedup', 0):.2f}x")
 
-    elif mode == "benchmark":
-        print("Starting benchmark...")
-        results = benchmark_model.remote(
-            epochs=epochs,
-            runs=runs,
-            batch_size=batch_size,
-            use_mojo=use_mojo,
-        )
-
-        # Save results locally
-        import json
-        output_path = "./benchmark_results_a100.json"
-        with open(output_path, "w") as f:
-            json.dump(results, f, indent=2)
-        print(f"\nBenchmark results saved to {output_path}")
-
-        # Print summary
-        if "summary" in results:
-            print("\n" + "="*80)
-            print("BENCHMARK SUMMARY")
-            print("="*80)
-            summary = results["summary"]
-            if "test_perplexity" in summary:
-                print(f"Test Perplexity: {summary['test_perplexity']['mean']:.2f}")
-            if "training_time_seconds" in summary:
-                print(f"Training Time: {summary['training_time_seconds']['mean']:.2f}s")
-            if "inference_time_seconds" in summary:
-                print(f"Inference Time: {summary['inference_time_seconds']['mean']:.3f}s")
-
-    elif mode == "mojo-benchmark":
-        print("Starting Mojo vs CUDA kernel benchmark...")
-        results = benchmark_mojo_vs_cuda.remote(
-            batch_size=batch_size,
-        )
-
-        # Save results locally
-        import json
-        output_path = "./mojo_vs_cuda_benchmark.json"
-        with open(output_path, "w") as f:
-            json.dump(results, f, indent=2)
-        print(f"\nBenchmark results saved to {output_path}")
-
-        # Print summary
-        if "summary" in results:
-            print("\n" + "="*80)
-            print("MOJO VS CUDA BENCHMARK SUMMARY")
-            print("="*80)
-            summary = results["summary"]
-            print(f"Total Mojo Time:    {summary['total_mojo_time_ms']:.3f} ms")
-            print(f"Total PyTorch Time: {summary['total_pytorch_time_ms']:.3f} ms")
-            print(f"Overall Speedup:    {summary['overall_speedup']:.2f}x")
-            print("\nPer-Operation Results:")
-            for bench in results["benchmarks"]:
-                print(f"  {bench['operation']:12s}: {bench['speedup']:.2f}x ({bench['faster']} faster)")
-
-    elif mode == "profile":
-        print("Starting profiling...")
-        traces = profile_model.remote()
-
-        # Save traces locally
-        for name, content in traces.items():
-            output_path = f"./{name}_trace_a100.json" if name != "stacks" else "./profiler_stacks_a100.txt"
-            with open(output_path, "w") as f:
-                f.write(content)
-            print(f"Saved {name} trace to {output_path}")
-
-    else:
-        print(f"Unknown mode: {mode}")
-        print("Valid modes: train, benchmark, profile, mojo-benchmark")
+        print("\n=== DETAILS ===")
+        for bench in results.get("benchmarks", []):
+            print(f"{bench['operation']:12s}: {bench['speedup']:.2f}x ({bench['faster']} faster)")
