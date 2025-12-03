@@ -1,52 +1,69 @@
-import math
-import compiler
-from max.tensor import Tensor, InputTensor, OutputTensor
-from runtime.asyncrt import DeviceContextPtr
+from memory import UnsafePointer, alloc, memset_zero
+from algorithm import parallelize
+from math import rsqrt
 
-# Register the kernel name "layer_norm" so Python side can call it
-@compiler.register("layer_norm")
-struct LayerNorm:
+alias TILE_H = 256
+
+struct LayerNormKernel:
 
     @staticmethod
-    fn execute[
-        target: StaticString,
-    ](
-        output: OutputTensor[dtype=DType.float32, rank=3],
-        input: InputTensor[dtype=DType.float32, rank=3],
-        weight: InputTensor[dtype=DType.float32, rank=1],
-        bias: InputTensor[dtype=DType.float32, rank=1],
-        eps: Float32,
-        ctx: DeviceContextPtr,
+    fn launch_kernel(
+        input: UnsafePointer[Float32],
+        output: UnsafePointer[Float32],
+        gamma: UnsafePointer[Float32],
+        beta: UnsafePointer[Float32],
+        B: Int, S: Int, H: Int,
+        eps: Float32
     ) raises:
 
-        # Shapes: [batch, seq, hidden]
-        let B = input.dim(0)
-        let S = input.dim(1)
-        let H = input.dim(2)
+        var total_rows = B * S
 
-        # Reference LayerNorm implementation:
-        # for each (b, s) row, normalize over the hidden dimension H
-        for b in range(B):
-            for s in range(S):
+        @parameter
+        fn process_row(row: Int):
+            LayerNormKernel._layernorm_row(
+                input, output, gamma, beta,
+                row, H, eps
+            )
 
-                # 1) Compute mean over hidden dim
-                var mean: Float32 = 0.0
-                for h in range(H):
-                    mean += input[b, s, h]
-                mean /= Float32(H)
+        parallelize[process_row](total_rows, total_rows)
 
-                # 2) Compute variance over hidden dim
-                var var_acc: Float32 = 0.0
-                for h in range(H):
-                    let diff = input[b, s, h] - mean
-                    var_acc += diff * diff
-                let variance = var_acc / Float32(H)
-                let inv_std = math.rsqrt(variance + eps)
+    # ============================================================
+    # Per-row LayerNorm
+    # ============================================================
+    @staticmethod
+    fn _layernorm_row(
+        input: UnsafePointer[Float32],
+        output: UnsafePointer[Float32],
+        gamma: UnsafePointer[Float32],
+        beta: UnsafePointer[Float32],
+        row: Int,
+        H: Int,
+        eps: Float32
+    ):
+        var row_start = row * H
 
-                # 3) Normalize, then apply affine transform (gamma, beta)
-                for h in range(H):
-                    let x = input[b, s, h]
-                    let normalized = (x - mean) * inv_std
-                    let gamma = weight[h]
-                    let beta = bias[h]
-                    output[b, s, h] = normalized * gamma + beta
+        # ---- Make output mutable (required by Mojo) ----
+        var output_mut = output.mut_cast[True]()
+
+        # ---- 1) Compute mean ----
+        var mean: Float32 = 0.0
+        for h in range(H):
+            mean += (input + (row_start + h))[]
+        mean /= Float32(H)
+
+        # ---- 2) Variance ----
+        var var_acc: Float32 = 0.0
+        for h in range(H):
+            var diff = (input + (row_start + h))[] - mean
+            var_acc += diff * diff
+        var variance = var_acc / Float32(H)
+        var inv_std = rsqrt(variance + eps)
+
+        # ---- 3) Normalize, scale, shift ----
+        for h in range(H):
+            var x = (input + (row_start + h))[]
+            var normed = (x - mean) * inv_std
+            var g = (gamma + h)[]
+            var b = (beta + h)[]
+
+            (output_mut + (row_start + h))[] = normed * g + b

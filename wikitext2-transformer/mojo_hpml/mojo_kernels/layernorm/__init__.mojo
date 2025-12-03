@@ -1,3 +1,3 @@
 # __init__.mojo
-# import .layernorm
-from .layernorm import LayerNorm
+from .layernorm import LayerNormKernel
+
