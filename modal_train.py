@@ -247,7 +247,7 @@ EOF
     print("\n🚀 Running benchmark...")
 
     benchmark_script = f"{PROJECT_ROOT}/mojo_hpml/benchmark_mojo_vs_cuda.py"
-    output_file = "/root/mojo_benchmark.json"
+    output_file = "/root/wikitext2-transformer/data/mojo_benchmark.json"
 
     bench_cmd = [
         "python3",

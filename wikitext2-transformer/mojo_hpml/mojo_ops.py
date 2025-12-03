@@ -63,7 +63,7 @@ class MojoLayerNorm(nn.Module):
         if MOJO_AVAILABLE and LAYER_NORM_PKG.exists():
             try:
                 # self.ops = CustomOpLibrary.load(str(LAYER_NORM_PKG))
-                self.ops = CustomOpLibrary.load(str(LAYER_NORM_PKG))
+                self.ops = CustomOpLibrary(LAYER_NORM_PKG)
 
                 self.use_mojo = True
                 print("[MojoLayerNorm] layernorm.mojopkg loaded ✓")
@@ -104,7 +104,7 @@ class MojoGEMM(nn.Module):
 
         if MOJO_AVAILABLE and GEMM_PKG.exists():
             try:
-                self.ops = CustomOpLibrary.load(str(GEMM_PKG))
+                self.ops = CustomOpLibrary(GEMM_PKG)
                 self.use_mojo = True
                 print("[MojoGEMM] gemm.mojopkg loaded ✓")
             except Exception as e:
