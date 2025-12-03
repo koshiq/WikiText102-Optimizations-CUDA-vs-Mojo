@@ -192,10 +192,6 @@ if __name__ == '__main__':
 
     print(f"\nDevice: {device}")
 
-    # if device.type == 'cuda':
-    #     print(f"GPU: {torch.cuda.get_device_name(0)}")
-    #     print(f"CUDA Version: {torch.version.cuda}")
-
     if device.type == "cuda":
         print(f"GPU: {torch.cuda.get_device_name(0)}")
         print(f"CUDA version: {torch.version.cuda}")

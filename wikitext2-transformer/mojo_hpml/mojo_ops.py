@@ -1,15 +1,3 @@
-"""
-Unified Mojo MAX Operations for PyTorch using .mojopkg kernels only.
-
-Supports:
- - MojoGEMM (gemm.mojopkg)
- - MojoSoftmax (softmax.mojopkg)
- - MojoLogSoftmax (softmax.mojopkg)
- - MojoLayerNorm (layernorm.mojopkg)
-
-NO MAX GRAPH CUSTOM OPS — Modern MAX API removed ops.custom extensions.
-"""
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -62,7 +50,6 @@ class MojoLayerNorm(nn.Module):
 
         if MOJO_AVAILABLE and LAYER_NORM_PKG.exists():
             try:
-                # self.ops = CustomOpLibrary.load(str(LAYER_NORM_PKG))
                 self.ops = CustomOpLibrary(LAYER_NORM_PKG)
 
                 self.use_mojo = True
@@ -129,7 +116,7 @@ class MojoSoftmax(nn.Module):
 
         if MOJO_AVAILABLE and SOFTMAX_PKG.exists():
             try:
-                self.ops = CustomOpLibrary.load(str(SOFTMAX_PKG))
+                self.ops = CustomOpLibrary(SOFTMAX_PKG)
                 self.use_mojo = True
                 print("[MojoSoftmax] softmax.mojopkg loaded ✓")
             except Exception as e:
@@ -147,7 +134,7 @@ class MojoLogSoftmax(nn.Module):
 
         if MOJO_AVAILABLE and SOFTMAX_PKG.exists():
             try:
-                self.ops = CustomOpLibrary.load(str(SOFTMAX_PKG))
+                self.ops = CustomOpLibrary(SOFTMAX_PKG)
                 self.use_mojo = True
                 print("[MojoLogSoftmax] softmax.mojopkg loaded ✓")
             except Exception as e:

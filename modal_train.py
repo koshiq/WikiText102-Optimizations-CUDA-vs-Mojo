@@ -1,14 +1,3 @@
-"""
-Modal deployment script for WikiText-2 Transformer on A100 GPU.
-
-Includes:
- - Mojo stdlib fix (copy to MOJO_PATH so mojo.paths loads correctly)
- - Full deep diagnostics (env vars, sys.path, filesystem map)
- - Correct heredoc import verification in subprocess
- - Actual benchmark execution & result parsing
- - Forced rebuild marker so Modal does NOT cache bad images
-"""
-
 import os
 import sys
 import subprocess
@@ -26,7 +15,7 @@ SITE_PACKAGES = f"{PIXI_ENV}/lib/python3.13/site-packages"
 
 MOJO_SITE   = f"{SITE_PACKAGES}/mojo"
 MOJO_PATH   = f"{PIXI_ENV}/lib/mojo"
-MOJO_TARGET = f"{MOJO_PATH}/mojo"    # copy entire mojo stdlib here
+MOJO_TARGET = f"{MOJO_PATH}/mojo"
 
 PROJECT_ROOT = "/root/wikitext2-transformer"
 
@@ -70,48 +59,6 @@ image = (
         # ---------------------------------------------------------
         f"{PIXI_ENV}/bin/python -c 'import max, mojo.paths; print(\"[BUILD] MAX + Mojo OK\")'"
     )
-
-
-
-# works with my cpu
-# image = (
-#     Image.debian_slim(python_version="3.13")
-#     .apt_install("curl", "git", "rsync", "build-essential")
-#     .run_commands(
-#         # 🔥 FORCE REBUILD MARKER — MODIFY THIS COMMENT TO REBUILD
-#         "echo 'REBUILD_TRIGGER: 2025-12-01'",
-
-#         # Install pixi
-#         "curl -fsSL https://pixi.sh/install.sh -o /tmp/install_pixi.sh",
-#         "bash /tmp/install_pixi.sh",
-
-#         # Create pixi project
-#         f"mkdir -p {PIXI_ROOT}",
-
-#         # Init pixi environment with Modular MAX channel
-#         f"export PATH=$HOME/.pixi/bin:$PATH && cd {PIXI_ROOT} && "
-#         f"pixi init -c https://conda.modular.com/max-nightly -c conda-forge",
-
-#         # Install core components inside pixi env
-#         # f"export PATH=$HOME/.pixi/bin:$PATH && cd {PIXI_ROOT} && pixi add python==3.11",
-#         f"export PATH=$HOME/.pixi/bin:$PATH && cd {PIXI_ROOT} && pixi add python==3.13 pillow>=11.0.0",
-#         f"export PATH=$HOME/.pixi/bin:$PATH && cd {PIXI_ROOT} && pixi add modular",
-#         # f"export PATH=$HOME/.pixi/bin:$PATH && cd {PIXI_ROOT} && pixi add pytorch",
-#         # Add the specific CUDA runtime libraries that PyTorch uses
-#         # f"export PATH=$HOME/.pixi/bin:$PATH && cd {PIXI_ROOT} && pixi add cuda-version=12.1",
-
-#         # Add the pytorch package that is built against the above cuda version
-#         f"export PATH=$HOME/.pixi/bin:$PATH && cd {PIXI_ROOT} && pixi add pytorch",
-
-
-#         # Copy Mojo standard library to MAX runtime location
-#         f"mkdir -p {MOJO_TARGET}",
-#         f"rsync -av {MOJO_SITE}/ {MOJO_TARGET}/",
-
-#         # Build-time verification
-#         f"export PATH=$HOME/.pixi/bin:$PATH && cd {PIXI_ROOT} && "
-#         f"pixi run python -c 'import max, mojo.paths; print(\"[BUILD] MAX + Mojo OK\")'"
-#     )
     .env({
         "MAX_ENABLE_GPU": "1",
         "PATH": f"/root/.pixi/bin:{PIXI_ENV}/bin:/usr/local/bin:/usr/bin:/bin",
@@ -137,27 +84,27 @@ def benchmark_mojo_vs_cuda(
 ):
 
     print("=" * 80)
-    print("🔧 MAX + MOJO ENVIRONMENT CHECK")
+    print(" MAX + MOJO ENVIRONMENT CHECK")
     print("=" * 80)
 
     # -----------------------------------------------------------------
     # 1. Print ALL environment variables
     # -----------------------------------------------------------------
-    print("\n📌 ENVIRONMENT VARIABLES:")
+    print("\n ENVIRONMENT VARIABLES:")
     for key in ["PATH", "PYTHONPATH", "LD_LIBRARY_PATH", "MODULAR_HOME", "MOJO_PATH"]:
         print(f"{key}: {os.environ.get(key)}")
 
     # -----------------------------------------------------------------
     # 2. sys.path
     # -----------------------------------------------------------------
-    print("\n📌 sys.path in MAIN PROCESS:")
+    print("\n sys.path in MAIN PROCESS:")
     for i, p in enumerate(sys.path):
         print(f"  [{i}] {p}")
 
     # -----------------------------------------------------------------
     # 3. Filesystem diagnostics
     # -----------------------------------------------------------------
-    print("\n📌 FILESYSTEM CHECK:")
+    print("\n FILESYSTEM CHECK:")
     paths = [
         (MOJO_SITE, "MOJO stdlib exists"),
         (MOJO_PATH, "MOJO_PATH exists"),
@@ -170,7 +117,7 @@ def benchmark_mojo_vs_cuda(
     # -----------------------------------------------------------------
     # 4. Deep subprocess import test using HEREDOC
     # -----------------------------------------------------------------
-    print("\n📌 Running subprocess import check...")
+    print("\n Running subprocess import check...")
     CHECK = r"""
 import sys, os, pkgutil, importlib, importlib.util
 
@@ -228,30 +175,29 @@ EOF
         env=os.environ.copy(),
     )
 
-    print("\n📤 Subprocess STDOUT:")
+    print("\n Subprocess STDOUT:")
     print(proc.stdout)
 
     if proc.stderr:
-        print("\n📥 Subprocess STDERR:")
+        print("\n Subprocess STDERR:")
         print(proc.stderr)
 
     if proc.returncode != 0:
-        print("\n❌ Environment FAILED")
+        print("\n Environment FAILED")
         raise RuntimeError("Environment setup failed")
 
-    print("\n✅ Environment OK (mojo.paths import works!)")
+    print("\n Environment OK (mojo.paths import works!)")
 
     # -----------------------------------------------------------------
     # 5. RUN THE ACTUAL BENCHMARK
     # -----------------------------------------------------------------
-    print("\n🚀 Running benchmark...")
+    print("\n Running benchmark...")
 
     benchmark_script = f"{PROJECT_ROOT}/mojo_hpml/benchmark_mojo_vs_cuda.py"
     output_file = "/root/wikitext2-transformer/data/mojo_benchmark.json"
 
     bench_cmd = [
         "python3",
-        # "/usr/local/bin/python3",
         benchmark_script,
         "--device", "cuda",
         "--batch-size", str(batch_size),
@@ -265,7 +211,7 @@ EOF
     try:
         subprocess.run(bench_cmd, check=True, env=os.environ.copy())
     except subprocess.CalledProcessError as e:
-        print("❌ Benchmark crashed!")
+        print(" Benchmark crashed!")
         print("STDOUT:", e.stdout)
         print("STDERR:", e.stderr)
         raise
@@ -291,7 +237,7 @@ def main(mode: str = "mojo-benchmark"):
 
         print("\n======= BENCHMARK COMPLETE =======")
         if "error" in results:
-            print("❌ Error:", results["error"])
+            print(" Error:", results["error"])
             return
 
         # Summary printout
