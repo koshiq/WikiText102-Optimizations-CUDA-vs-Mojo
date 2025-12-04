@@ -38,7 +38,7 @@ image = (
     Image.debian_slim(python_version="3.13")
     .apt_install("curl", "git", "rsync", "build-essential")
     .run_commands(
-        "echo 'REBUILD_TRIGGER: 2025-12-02'",
+        "echo 'REBUILD_TRIGGER: 2025-12-03-runtime-compile'",
 
         # Install pixi
         "curl -fsSL https://pixi.sh/install.sh -o /tmp/install_pixi.sh",
@@ -68,8 +68,20 @@ image = (
         # ---------------------------------------------------------
         # 4. Verify MAX + Mojo load successfully
         # ---------------------------------------------------------
-        f"{PIXI_ENV}/bin/python -c 'import max, mojo.paths; print(\"[BUILD] MAX + Mojo OK\")'"
+        f"{PIXI_ENV}/bin/python -c 'import max, mojo.paths; print(\"[BUILD] MAX + Mojo OK\")'",
     )
+    .env({
+        "MAX_ENABLE_GPU": "1",
+        "PATH": f"/root/.pixi/bin:{PIXI_ENV}/bin:/usr/local/bin:/usr/bin:/bin",
+        "PYTHONPATH": f"{SITE_PACKAGES}:{PROJECT_ROOT}:{PROJECT_ROOT}/mojo_hpml:{MOJO_PATH}",
+        "LD_LIBRARY_PATH": f"{PIXI_ENV}/lib",
+        "MODULAR_HOME": PIXI_ENV,
+        "MAX_HOME": PIXI_ENV,
+        "MOJO_PATH": MOJO_PATH,
+        "MODULAR_MOJO_IMPORT_PATH": MOJO_PATH,
+        "MOJO_PYTHON_LIBRARY": f"{PIXI_ENV}/lib/libpython3.13.so",
+    })
+    .add_local_dir("./wikitext2-transformer", remote_path=PROJECT_ROOT)
 
 
 
@@ -112,16 +124,6 @@ image = (
 #         f"export PATH=$HOME/.pixi/bin:$PATH && cd {PIXI_ROOT} && "
 #         f"pixi run python -c 'import max, mojo.paths; print(\"[BUILD] MAX + Mojo OK\")'"
 #     )
-    .env({
-        "MAX_ENABLE_GPU": "1",
-        "PATH": f"/root/.pixi/bin:{PIXI_ENV}/bin:/usr/local/bin:/usr/bin:/bin",
-        "PYTHONPATH": f"{SITE_PACKAGES}:{PROJECT_ROOT}:{PROJECT_ROOT}/mojo_hpml:{MOJO_PATH}",
-        "LD_LIBRARY_PATH": f"{PIXI_ENV}/lib",
-        "MODULAR_HOME": PIXI_ENV,
-        "MAX_HOME": PIXI_ENV,
-        "MOJO_PATH": MOJO_PATH,
-    })
-    .add_local_dir("./wikitext2-transformer", remote_path=PROJECT_ROOT)
 )
 
 # =====================================================================
@@ -242,16 +244,64 @@ EOF
     print("\n✅ Environment OK (mojo.paths import works!)")
 
     # -----------------------------------------------------------------
-    # 5. RUN THE ACTUAL BENCHMARK
+    # 5. COMPILE MOJO KERNELS AT RUNTIME
+    # -----------------------------------------------------------------
+    print("\n🔨 Compiling Mojo kernels...")
+
+    kernels_to_compile = [
+        ("GEMM", f"{PROJECT_ROOT}/mojo_hpml/mojo_kernels/GEMM", f"{PROJECT_ROOT}/mojo_hpml/mojo_kernels/gemm.mojopkg"),
+        ("Softmax", f"{PROJECT_ROOT}/mojo_hpml/mojo_kernels/softmax", f"{PROJECT_ROOT}/mojo_hpml/mojo_kernels/softmax.mojopkg"),
+        ("LayerNorm", f"{PROJECT_ROOT}/mojo_hpml/mojo_kernels/layernorm", f"{PROJECT_ROOT}/mojo_hpml/mojo_kernels/layernorm.mojopkg"),
+    ]
+
+    # Set up compilation environment with stdlib paths
+    compile_env = os.environ.copy()
+    compile_env["MODULAR_MOJO_IMPORT_PATH"] = MOJO_PATH
+    compile_env["MOJO_PATH"] = MOJO_PATH
+
+    for name, src, dst in kernels_to_compile:
+        # Always recompile to ensure correct environment
+        print(f"Compiling {name} kernel with runtime stdlib paths...")
+        try:
+            # Remove old package if exists
+            if os.path.exists(dst):
+                os.remove(dst)
+
+            # Compile with environment variables set
+            result = subprocess.run(
+                ["bash", "-c", f"cd {PIXI_ROOT} && PATH=$HOME/.pixi/bin:$PATH MODULAR_MOJO_IMPORT_PATH={MOJO_PATH} MOJO_PATH={MOJO_PATH} pixi run mojo package {src} -o {dst}"],
+                check=True,
+                env=compile_env,
+                capture_output=True,
+                text=True
+            )
+            print(f"✓ {name} compiled successfully")
+            if result.stdout:
+                print(f"  Output: {result.stdout}")
+        except subprocess.CalledProcessError as e:
+            print(f"⚠ {name} compilation failed:")
+            print(f"  stdout: {e.stdout}")
+            print(f"  stderr: {e.stderr}")
+
+    # -----------------------------------------------------------------
+    # 6. RUN THE ACTUAL BENCHMARK
     # -----------------------------------------------------------------
     print("\n🚀 Running benchmark...")
 
     benchmark_script = f"{PROJECT_ROOT}/mojo_hpml/benchmark_mojo_vs_cuda.py"
-    output_file = "/root/mojo_benchmark.json"
+    output_file = f"{PROJECT_ROOT}/mojo_benchmark.json"
 
+    # Set up environment with correct MOJO_PYTHON and stdlib paths
+    env = os.environ.copy()
+    env["MOJO_PYTHON_LIBRARY"] = f"{PIXI_ENV}/lib/libpython3.13.so"
+    env["MODULAR_MOJO_IMPORT_PATH"] = MOJO_PATH
+    env["MOJO_PATH"] = MOJO_PATH
+    env["MODULAR_HOME"] = PIXI_ENV
+    env["MAX_HOME"] = PIXI_ENV
+
+    # Use pixi run to ensure proper environment
     bench_cmd = [
-        "python3",
-        # "/usr/local/bin/python3",
+        f"{PIXI_ENV}/bin/python3",
         benchmark_script,
         "--device", "cuda",
         "--batch-size", str(batch_size),
@@ -263,7 +313,7 @@ EOF
     ]
 
     try:
-        subprocess.run(bench_cmd, check=True, env=os.environ.copy())
+        subprocess.run(bench_cmd, check=True, env=env)
     except subprocess.CalledProcessError as e:
         print("❌ Benchmark crashed!")
         print("STDOUT:", e.stdout)
@@ -304,3 +354,9 @@ def main(mode: str = "mojo-benchmark"):
         print("\n=== DETAILS ===")
         for bench in results.get("benchmarks", []):
             print(f"{bench['operation']:12s}: {bench['speedup']:.2f}x ({bench['faster']} faster)")
+
+        # Save results locally
+        local_output = "wikitext2-transformer/mojo_benchmark.json"
+        with open(local_output, 'w') as f:
+            json.dump(results, f, indent=2)
+        print(f"\n💾 Results saved locally to: {local_output}")
