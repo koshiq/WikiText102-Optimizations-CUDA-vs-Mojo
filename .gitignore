@@ -1,0 +1,39 @@
+# Virtual environments
+ML/
+venv/
+.venv/
+
+# Python cache and bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions and compiled artifacts
+*.so
+cuda/*.so
+cuda/custom_ops*.so
+
+# Build / distribution
+build/
+dist/
+*.egg-info/
+pip-wheel-metadata/
+
+# Test / cache
+.pytest_cache/
+.mypy_cache/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Logs and traces
+logs/
+logs/transformer_trace/
+
+# Editors
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
