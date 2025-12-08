@@ -1,5 +1,5 @@
 /**
- * Optimized Softmax Kernels for RTX 4070
+ * Optimized Softmax Kernels
  *
  * Optimizations:
  * - Online (single-pass where possible) algorithm

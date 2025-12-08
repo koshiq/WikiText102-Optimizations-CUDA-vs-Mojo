@@ -113,13 +113,5 @@ Profiling showed that matrix multiply (GEMM), SoftMax, and LayerNorm occupy the 
 - iterate on tiling/packing strategies for GEMM
 - experiment with numerically stable and fused softmax + attention kernels
 
-**Tips & gotchas**
-- If you see "libc10.so" import errors, ensure `LD_LIBRARY_PATH` includes the venv Torch libs (e.g. `export LD_LIBRARY_PATH=$VENV/lib/pythonX.Y/site-packages/torch/lib:$LD_LIBRARY_PATH`).
-- C++ extension objects are not automatically moved by `Module.to()`; use provided helper `move_custom_modules_to_device(module, device)` or call `inner.cuda()` on wrapped modules.
-- For meaningful kernel speedups, benchmark with larger matrix sizes / batch sizes; small models often show CPU/host overheads that hide GPU kernel advantages.
-
-**Contact / Author**
-- For questions or follow-ups, open an issue or reach out to the repo owner.
 
 ---
-_This README is a concise guide to the repo. For specific code-level explanations, see docstrings and inline comments in `cuda/custom_ops.cpp`, `customCudaKernel_transformer.py`, and the kernel sources in `cuda/cuda_kernels/`._

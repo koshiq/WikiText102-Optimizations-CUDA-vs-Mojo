@@ -1,5 +1,5 @@
 /**
- * Optimized GEMM (General Matrix Multiply) Kernels for RTX 4070
+ * Optimized GEMM (General Matrix Multiply)
  * C = alpha * (A @ B) + beta * C
  *
  * Optimizations:

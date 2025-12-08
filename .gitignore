@@ -62,3 +62,5 @@ profiler_stacks*.txt
 # Benchmark outputs
 benchmark_results*.json
 mojo_benchmark.json
+results_*.json
+*.json

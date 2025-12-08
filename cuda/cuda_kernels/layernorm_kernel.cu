@@ -1,5 +1,5 @@
 /**
- * Optimized LayerNorm Kernels for RTX 4070
+ * Optimized LayerNorm Kernels
  *
  * Optimizations:
  * - Welford's online algorithm for numerical stability
