@@ -1,40 +1,38 @@
-# Python
+# Virtual environments
+ML/
+venv/
+.venv/
+
+# Python cache and bytecode
 __pycache__/
 *.py[cod]
 *$py.class
+
+# C extensions and compiled artifacts
 *.so
-.Python
+cuda/*.so
+cuda/custom_ops*.so
+
+# Build / distribution
 build/
-develop-eggs/
 dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
 *.egg-info/
-.installed.cfg
-*.egg
+pip-wheel-metadata/
 
-# PyTorch
-*.pt
-*.pth
+# Test / cache
+.pytest_cache/
+.mypy_cache/
 
-# Virtual Environment
-venv/
-ENV/
-env/
+# Jupyter
+.ipynb_checkpoints/
 
-# IDE
+# Logs and traces
+logs/
+logs/transformer_trace/
+
+# Editors
 .vscode/
 .idea/
-*.swp
-*.swo
-*~
 
 # OS
 .DS_Store

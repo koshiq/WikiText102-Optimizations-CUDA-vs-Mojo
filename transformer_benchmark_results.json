@@ -1,0 +1,44 @@
+{
+  "config": {
+    "ntoken": 28782,
+    "ninp": 200,
+    "nhead": 2,
+    "nhid": 200,
+    "nlayers": 2,
+    "dropout": 0.2,
+    "batch_size": 20,
+    "seq_len": 35,
+    "iterations": 100,
+    "warmup": 10
+  },
+  "full_model": {
+    "pytorch_time_ms": 2.2258819399939966,
+    "max_time_ms": 5.125669840017508,
+    "speedup": 0.4342616691024316,
+    "faster": "PyTorch"
+  },
+  "operations": [
+    {
+      "name": "GEMM",
+      "max_ms": 0.08766617000219412,
+      "pytorch_ms": 0.016372640020563267,
+      "speedup": 0.18676121039796184,
+      "faster": "PyTorch"
+    },
+    {
+      "name": "LogSoftmax",
+      "max_ms": 0.12781090001226403,
+      "pytorch_ms": 0.007284559978870675,
+      "speedup": 0.05699482577911343,
+      "faster": "PyTorch"
+    },
+    {
+      "name": "LayerNorm",
+      "max_ms": 0.13824440000462346,
+      "pytorch_ms": 0.009887409978546202,
+      "speedup": 0.07152123325223682,
+      "faster": "PyTorch"
+    }
+  ],
+  "gpu": "NVIDIA GeForce RTX 4070 Laptop GPU"
+}
