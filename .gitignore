@@ -37,3 +37,7 @@ logs/transformer_trace/
 # OS
 .DS_Store
 Thumbs.db
+
+# Model checkpoints and data files
+*.pt
+*.json
