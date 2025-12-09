@@ -13,13 +13,10 @@ The project also explores implementing low-level kernels (GEMM, SoftMax, LayerNo
 - Provide repeatable benchmarking and profiling harnesses.
 
 **Milestones & Status**
-- Fix C++ pybind bindings and expose parameters: **Completed**
-- Python wrappers to present C++ tensors as `nn.Parameter` and device helpers: **Completed**
-- Clean up duplicate kernels and package extension for editable install: **Completed**
-- Build & install extension in editable mode and run short benchmarks: **Completed**
-- Add `final-publish` branch snapshot with cleaned repository (no venv): **Completed**
-- Profiling + analysis to identify GEMM/SoftMax/LayerNorm as primary hotspots: **Completed**
-- Implement further kernel performance optimizations & MAX autograd support: **In progress / Planned**
+- Phase 1 — Baseline (PyTorch): Implement 4-layer Transformer decoder, train and profile on WikiText-2. **Completed**
+- Phase 2 — Mojo Baseline: Extracted all trained PyTorch weights and rebuilt the entire Transformer forward pass using the MAX Graph API on GPU—added to establish a correctness-verified Mojo baseline before integrating custom GEMM/Softmax kernels  **Completed**
+- Phase 3 — Implement and benchmark GEMM and SoftMax Kernel in Mojo to MAX Graph. Ran into an error so had to switch to optimizing CUDA Kernels instead. **Completed**
+- Phase 4: Implement further kernel performance optimizations & MAX autograd support: **Partially Completed**
 
 **Repository (high-level) structure**
 - `cuda/`: C++/CUDA extension sources and packaging helpers.
@@ -138,6 +135,8 @@ Profiling showed that matrix multiply (GEMM), SoftMax, and LayerNorm occupy the 
 | LogSoftmax | 0.004 ms | 0.062 ms | PyTorch faster |
 | LayerNorm | 0.009 ms | 0.090 ms | PyTorch faster |
 | **End-to-end inference** | 2.35 ms | 5.06 ms | PyTorch faster |
+
+<img width="455" height="532" alt="image" src="https://github.com/user-attachments/assets/a6a29bca-bf86-4ffa-848c-c79a811babcb" />
 
 ### Key Observations
 - MAX excels only when GEMM dominates runtime.  
