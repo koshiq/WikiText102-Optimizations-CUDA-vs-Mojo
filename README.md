@@ -114,4 +114,34 @@ Profiling showed that matrix multiply (GEMM), SoftMax, and LayerNorm occupy the 
 - experiment with numerically stable and fused softmax + attention kernels
 
 
+## Results & Observations
+
+### Summary of Findings
+- PyTorch is faster on small models where kernel launch overhead dominates.
+- MAX Graph becomes faster (1.7×–1.9× GEMM speedup) on larger models where GEMM accounts for 70–80% of FLOPs.
+- Softmax and LayerNorm remain faster in PyTorch due to cuDNN fused reduction ops.
+- Custom CUDA kernels are slower than cuBLAS because they lack tensor cores and warp-level optimizations.
+- Mojo .mojopkg kernels cannot load inside MAX due to stdlib path mismatch.
+
+### Representative Benchmark (Large Model)
+| Operation | PyTorch | MAX Graph | Speedup |
+|----------|---------|-----------|---------|
+| GEMM | 3.49 ms | **1.83 ms** | **1.9× faster (MAX)** |
+| LogSoftmax | 0.61 ms | 1.35 ms | PyTorch 2× faster |
+| LayerNorm | 0.07 ms | 0.24 ms | PyTorch 3× faster |
+| **End-to-end inference** | 134.5 ms | **120.0 ms** | **1.12× faster (MAX)** |
+
+### Representative Benchmark (Small Model)
+| Operation | PyTorch | MAX Graph | Speedup |
+|----------|---------|-----------|---------|
+| GEMM | 0.016 ms | 0.085 ms | PyTorch faster |
+| LogSoftmax | 0.004 ms | 0.062 ms | PyTorch faster |
+| LayerNorm | 0.009 ms | 0.090 ms | PyTorch faster |
+| **End-to-end inference** | 2.35 ms | 5.06 ms | PyTorch faster |
+
+### Key Observations
+- MAX excels only when GEMM dominates runtime.  
+- PyTorch dominates memory-bound ops due to cuDNN fusion.  
+- Mojo ecosystem still experimental; custom kernels not deployable.  
+
 ---
