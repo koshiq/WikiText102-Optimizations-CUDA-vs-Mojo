@@ -2,7 +2,7 @@
 #include <vector>
 
 // Forward declarations for CUDA host functions
-torch::Tensor gemm_cuda_fp32(torch::Tensor A, torch::Tensor B, float alpha, float beta);
+torch::Tensor gemm_cuda(torch::Tensor A, torch::Tensor B);
 
 std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> layer_norm_cuda_forward(
     torch::Tensor input, torch::Tensor gamma, torch::Tensor beta, float eps);
@@ -26,7 +26,7 @@ torch::Tensor softmax_cuda_backward(
 torch::Tensor gemm_forward(torch::Tensor input, torch::Tensor weights) {
     CHECK_INPUT(input);
     CHECK_INPUT(weights);
-    return gemm_cuda_fp32(input, weights.t().contiguous(), 1.0, 0.0);
+    return gemm_cuda(input, weights.t().contiguous());
 }
 
 class CustomSoftmaxAutograd : public torch::autograd::Function<CustomSoftmaxAutograd> {

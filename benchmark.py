@@ -12,6 +12,7 @@ import os
 
 # Import models
 from transformer import TransformerModel as PyTorchModel
+from transformer import create_scripted_model
 from customCudaKernel_transformer import TransformerModel as CUDAModel, get_model_info
 
 # Try to import MAX Graph API model
@@ -196,17 +197,30 @@ def main():
     models = {}
     results = {}
     model_num = 1
-    total_models = 1 + (1 if cuda_ops_enabled else 0) + (1 if MAX_GRAPH_AVAILABLE else 0)
+    total_models = 2 + (1 if cuda_ops_enabled else 0) + (1 if MAX_GRAPH_AVAILABLE else 0)  # Added TorchScript
 
-    # 1. PyTorch Standard
-    print(f"\n   [{model_num}/{total_models}] PyTorch Standard Model...")
+    # 1. PyTorch Standard (Eager Mode)
+    print(f"\n   [{model_num}/{total_models}] PyTorch Standard Model (Eager)...")
     pytorch_model = PyTorchModel(ntoken, ninp, nhead, nhid, nlayers, dropout).to(device)
     pytorch_params = sum(p.numel() for p in pytorch_model.parameters())
-    models['PyTorch'] = pytorch_model
+    models['PyTorch-Eager'] = pytorch_model
     print(f"         Parameters: {pytorch_params:,}")
     model_num += 1
 
-    # 2. CUDA-Optimized
+    # 2. PyTorch TorchScript (Graph Compiled with Fusion)
+    print(f"\n   [{model_num}/{total_models}] PyTorch TorchScript Model (Graph Compiled)...")
+    try:
+        scripted_model = create_scripted_model(ntoken, ninp, nhead, nhid, nlayers, dropout, device)
+        scripted_params = sum(p.numel() for p in scripted_model.parameters())
+        models['PyTorch-Script'] = scripted_model
+        print(f"         Parameters: {scripted_params:,}")
+        print(f"         Optimizations: Operator fusion, kernel selection, graph compilation")
+    except Exception as e:
+        print(f"         [ERROR] TorchScript compilation failed: {e}")
+        print(f"         Falling back to eager mode for this comparison")
+    model_num += 1
+
+    # 3. CUDA-Optimized
     if cuda_ops_enabled:
         print(f"\n   [{model_num}/{total_models}] CUDA-Optimized Model...")
         cuda_model = CUDAModel(ntoken, ninp, nhead, nhid, nlayers, dropout).to(device)
@@ -224,7 +238,7 @@ def main():
     else:
         print(f"\n   [SKIP] CUDA-Optimized Model... (ops not built)")
 
-    # 3. MAX Graph API
+    # 4. MAX Graph API
     if MAX_GRAPH_AVAILABLE:
         print(f"\n   [{model_num}/{total_models}] MAX Graph API Model...")
         try:
@@ -240,22 +254,56 @@ def main():
 
     # Individual Operation Benchmarks
     print_header("BENCHMARK 1: INDIVIDUAL OPERATION BENCHMARKS")
-    
-    # GEMM Benchmark
-    if MAX_GRAPH_AVAILABLE:
-        gemm_input = torch.randn(batch_size * seq_len, ninp, device=device)
-        pytorch_gemm = nn.Linear(ninp, nhid).to(device)
-        if 'MAX-Graph' in models:
-            max_gemm = MaxLinear(ninp, nhid).to(device)
-            benchmark_op("GEMM (MAX vs PyTorch)", pytorch_gemm, max_gemm, gemm_input)
 
-    # LogSoftmax Benchmark
-    if MAX_GRAPH_AVAILABLE:
-        softmax_input = torch.randn(batch_size * seq_len, ntoken, device=device)
-        pytorch_softmax = nn.LogSoftmax(dim=-1).to(device)
-        if 'MAX-Graph' in models:
-            max_softmax = MaxLogSoftmax(dim=-1).to(device)
-            benchmark_op("LogSoftmax (MAX vs PyTorch)", pytorch_softmax, max_softmax, softmax_input)
+    # GEMM/Linear Benchmark
+    print_section("Linear Layer (GEMM)")
+    gemm_input = torch.randn(batch_size * seq_len, ninp, device=device)
+    pytorch_linear = nn.Linear(ninp, nhid).to(device)
+
+    if cuda_ops_enabled:
+        try:
+            from customCudaKernel_transformer import WrappedCustomLinear
+            cuda_linear = WrappedCustomLinear(ninp, nhid).to(device)
+            benchmark_op("  CUDA-Kernels vs PyTorch", pytorch_linear, cuda_linear, gemm_input)
+        except Exception as e:
+            print(f"  [SKIP] CUDA kernel benchmark failed: {e}")
+
+    if MAX_GRAPH_AVAILABLE and 'MAX-Graph' in models:
+        max_linear = MaxLinear(ninp, nhid).to(device)
+        benchmark_op("  MAX-Graph vs PyTorch", pytorch_linear, max_linear, gemm_input)
+
+    # LayerNorm Benchmark
+    if cuda_ops_enabled:
+        print_section("Layer Normalization")
+        layernorm_input = torch.randn(batch_size * seq_len, ninp, device=device)
+        pytorch_layernorm = nn.LayerNorm(ninp).to(device)
+
+        try:
+            from customCudaKernel_transformer import WrappedCustomLayerNorm
+            cuda_layernorm = WrappedCustomLayerNorm(ninp).to(device)
+            benchmark_op("  CUDA-Kernels vs PyTorch", pytorch_layernorm, cuda_layernorm, layernorm_input)
+        except Exception as e:
+            print(f"  [SKIP] CUDA kernel benchmark failed: {e}")
+
+    # Softmax Benchmark
+    print_section("Softmax")
+    softmax_input = torch.randn(batch_size * seq_len, ntoken, device=device)
+    pytorch_logsoftmax = nn.LogSoftmax(dim=-1).to(device)
+
+    if cuda_ops_enabled:
+        try:
+            from custom_ops import CustomSoftmax
+            cuda_softmax = CustomSoftmax(dim=-1).to(device)
+            # Wrap to match LogSoftmax signature (LogSoftmax = log(Softmax))
+            def cuda_logsoftmax_wrapper(x):
+                return torch.log(cuda_softmax(x) + 1e-10)
+            benchmark_op("  CUDA-Kernels vs PyTorch", pytorch_logsoftmax, cuda_logsoftmax_wrapper, softmax_input)
+        except Exception as e:
+            print(f"  [SKIP] CUDA kernel benchmark failed: {e}")
+
+    if MAX_GRAPH_AVAILABLE and 'MAX-Graph' in models:
+        max_logsoftmax = MaxLogSoftmax(dim=-1).to(device)
+        benchmark_op("  MAX-Graph vs PyTorch", pytorch_logsoftmax, max_logsoftmax, softmax_input)
 
     # Run benchmarks
     print_header("BENCHMARK 2: INFERENCE (Forward Pass Only)")
@@ -316,7 +364,7 @@ def main():
     # Summary comparison
     print_header("PERFORMANCE SUMMARY")
 
-    baseline_name = 'PyTorch'
+    baseline_name = 'PyTorch-Eager'  # Changed to match new naming
     if f'{baseline_name}_inference' in results and f'{baseline_name}_training' in results:
         baseline_inf = results[f'{baseline_name}_inference']['mean']
         baseline_train = results[f'{baseline_name}_training']['mean']
@@ -363,8 +411,8 @@ def main():
         baseline_train_time = train_times.get(baseline_name, fastest_train_time)
         train_improvement = ((baseline_train_time / fastest_train_time) - 1) * 100
 
-        print(f"\nFastest Inference:  {fastest_inf} ({inf_improvement:+.1f}% vs PyTorch)")
-        print(f"Fastest Training:   {fastest_train} ({train_improvement:+.1f}% vs PyTorch)")
+        print(f"\nFastest Inference:  {fastest_inf} ({inf_improvement:+.1f}% vs PyTorch-Eager)")
+        print(f"Fastest Training:   {fastest_train} ({train_improvement:+.1f}% vs PyTorch-Eager)")
 
         # Time savings estimate
         print(f"\nTime Savings for 10,000 Iterations:")

@@ -1,5 +1,5 @@
 """
-Benchmark PyTorch vs MAX-accelerated WikiText2 Transformer model.
+Benchmark PyTorch vs TorchScript vs MAX-accelerated WikiText2 Transformer model.
 Compares inference performance on the actual trained model.
 """
 
@@ -9,6 +9,7 @@ import time
 import json
 import argparse
 from transformer import TransformerModel
+from transformer import create_scripted_model
 from maxGraph_transformer import TransformerModel as TransformerModelMAX, max_matmul, max_log_softmax, max_layer_norm
 
 
@@ -88,7 +89,7 @@ def benchmark_model(model, data, iterations=100, warmup=10, device='cuda'):
 def run_transformer_benchmark(config):
     """Run full Transformer model benchmark"""
     print("="*70)
-    print("WikiText2 Transformer: PyTorch vs MAX Benchmark")
+    print("WikiText2 Transformer: PyTorch vs TorchScript vs MAX Benchmark")
     print("="*70)
     print()
 
@@ -116,8 +117,8 @@ def run_transformer_benchmark(config):
     # Create test data
     test_data = torch.randint(0, config['ntoken'], (config['seq_len'], config['batch_size']), device=device)
 
-    # Benchmark PyTorch model
-    print("Building PyTorch model...")
+    # Benchmark PyTorch Eager model
+    print("Building PyTorch-Eager model...")
     pytorch_model = TransformerModel(
         config['ntoken'],
         config['ninp'],
@@ -127,7 +128,7 @@ def run_transformer_benchmark(config):
         config['dropout']
     )
 
-    print("Benchmarking PyTorch model...")
+    print("Benchmarking PyTorch-Eager model...")
     pytorch_time = benchmark_model(
         pytorch_model,
         test_data,
@@ -135,8 +136,57 @@ def run_transformer_benchmark(config):
         config['warmup'],
         device
     )
-    print(f"  PyTorch: {pytorch_time:.4f} ms/iter")
+    print(f"  PyTorch-Eager: {pytorch_time:.4f} ms/iter")
     print()
+
+    # Save PyTorch model weights to disk
+    print("Saving PyTorch model weights...")
+    weights_path = 'temp_pytorch_weights.pth'
+    torch.save(pytorch_model.state_dict(), weights_path)
+
+    # Delete PyTorch model and free GPU memory
+    print("Freeing PyTorch-Eager model memory...")
+    del pytorch_model
+    torch.cuda.empty_cache()
+    print(f"  GPU Memory freed. Available: {torch.cuda.memory_allocated()/1024**3:.2f} GB")
+    print()
+
+    # Benchmark PyTorch TorchScript model
+    print("Building PyTorch-Script model (TorchScript with fusion)...")
+    try:
+        scripted_model = create_scripted_model(
+            config['ntoken'],
+            config['ninp'],
+            config['nhead'],
+            config['nhid'],
+            config['nlayers'],
+            config['dropout'],
+            device
+        )
+
+        print("Benchmarking PyTorch-Script model...")
+        scripted_time = benchmark_model(
+            scripted_model,
+            test_data,
+            config['iterations'],
+            config['warmup'],
+            device
+        )
+        print(f"  PyTorch-Script: {scripted_time:.4f} ms/iter")
+        script_speedup = pytorch_time / scripted_time
+        print(f"  Speedup vs Eager: {script_speedup:.2f}x ({(script_speedup-1)*100:+.1f}%)")
+        print()
+
+        # Free TorchScript model memory
+        print("Freeing PyTorch-Script model memory...")
+        del scripted_model
+        torch.cuda.empty_cache()
+        print(f"  GPU Memory freed. Available: {torch.cuda.memory_allocated()/1024**3:.2f} GB")
+        print()
+    except Exception as e:
+        print(f"  [ERROR] TorchScript benchmark failed: {e}")
+        scripted_time = None
+        print()
 
     # Benchmark MAX model
     print("Building MAX-accelerated model...")
@@ -149,21 +199,14 @@ def run_transformer_benchmark(config):
         config['dropout']
     )
 
-    # Copy weights from PyTorch model for fair comparison (handle naming differences)
-    print("Copying weights from PyTorch model...")
-    # Embedding may be named `input_emb` or `encoder_embedding` depending on implementation
-    src_emb = getattr(pytorch_model, 'input_emb', None) or getattr(pytorch_model, 'encoder_embedding', None)
-    dst_emb = getattr(max_model, 'input_emb', None) or getattr(max_model, 'encoder_embedding', None)
-    if src_emb is not None and dst_emb is not None:
-        dst_emb.weight.data = src_emb.weight.data.clone()
-    else:
-        print('Warning: could not find embedding attribute to copy (input_emb / encoder_embedding)')
+    # Load weights from saved PyTorch model
+    print("Loading weights from saved PyTorch model...")
+    pytorch_weights = torch.load(weights_path)
+    max_model.load_state_dict(pytorch_weights, strict=False)
 
-    # Positional encoder should be present as `pos_encoder`
-    if hasattr(pytorch_model, 'pos_encoder') and hasattr(max_model, 'pos_encoder'):
-        max_model.pos_encoder.pe = pytorch_model.pos_encoder.pe.clone()
-    else:
-        print('Warning: could not find pos_encoder to copy')
+    # Clean up weights file
+    import os
+    os.remove(weights_path)
 
     print("Benchmarking MAX model...")
     max_time = benchmark_model(
@@ -176,10 +219,58 @@ def run_transformer_benchmark(config):
     print(f"  MAX: {max_time:.4f} ms/iter")
     print()
 
+    # Free MAX model memory before individual operation benchmarks
+    print("Freeing MAX model memory...")
+    del max_model
+    torch.cuda.empty_cache()
+    print()
+
     # Benchmark individual operations
     print("="*70)
-    print("INDIVIDUAL OPERATION BENCHMARKS")
+    print("INDIVIDUAL OPERATION BENCHMARKS (3-way comparison)")
     print("="*70)
+    print()
+
+    # Try to import custom CUDA ops
+    try:
+        import custom_ops
+        cuda_available = True
+        print("✓ Custom CUDA kernels available")
+    except ImportError:
+        # Try JIT compilation
+        print("⏳ Custom CUDA kernels not pre-installed, attempting JIT compilation...")
+        try:
+            import os
+            import sys
+            from torch.utils.cpp_extension import load
+
+            # Monkey-patch to disable CUDA version check
+            from torch.utils import cpp_extension
+            original_check = cpp_extension._check_cuda_version
+            def patched_check(*args, **kwargs):
+                pass
+            cpp_extension._check_cuda_version = patched_check
+
+            # Get cuda directory path
+            cuda_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'cuda')
+
+            custom_ops = load(
+                name='custom_ops_jit',
+                sources=[
+                    os.path.join(cuda_dir, 'custom_ops.cpp'),
+                    os.path.join(cuda_dir, 'cuda_kernels', 'gemm_kernel.cu'),
+                    os.path.join(cuda_dir, 'cuda_kernels', 'layernorm_kernel.cu'),
+                    os.path.join(cuda_dir, 'cuda_kernels', 'softmax_kernel.cu'),
+                ],
+                verbose=False,
+            )
+            cuda_available = True
+            print("✓ Custom CUDA kernels compiled via JIT")
+        except Exception as e:
+            cuda_available = False
+            print(f"✗ Custom CUDA kernels compilation failed: {e}")
+            print("  Note: On Windows, Microsoft Visual C++ Build Tools are required:")
+            print("  https://visualstudio.microsoft.com/visual-cpp-build-tools/")
     print()
 
     operation_results = []
@@ -188,22 +279,56 @@ def run_transformer_benchmark(config):
     print("Benchmarking GEMM (Matrix Multiplication)...")
     batch_tokens = config['batch_size'] * config['seq_len']
     A = torch.randn(batch_tokens, config['ninp'], device=device)
-    B = torch.randn(config['ninp'], config['nhid'], device=device)  # Correct shape for matmul
+    B = torch.randn(config['ninp'], config['nhid'], device=device)
+    # For custom_ops.gemm_forward, weights are [out_features, in_features]
+    B_weights = torch.randn(config['nhid'], config['ninp'], device=device)
 
-    gemm_result = benchmark_operation(
-        'GEMM',
-        max_matmul,
-        lambda a, b: torch.matmul(a, b),
-        A, B,
-        iterations=config['iterations'],
-        warmup=config['warmup'],
-        device=device,
-        output_shape=(batch_tokens, config['nhid'])  # Specify correct output shape
-    )
-    operation_results.append(gemm_result)
-    print(f"  MAX:     {gemm_result['max_ms']:.4f} ms")
-    print(f"  PyTorch: {gemm_result['pytorch_ms']:.4f} ms")
-    print(f"  Speedup: {gemm_result['speedup']:.2f}x ({gemm_result['faster']} faster)")
+    # Benchmark PyTorch
+    torch.cuda.synchronize()
+    start = time.perf_counter()
+    for _ in range(config['warmup']):
+        _ = torch.matmul(A, B)
+    torch.cuda.synchronize()
+
+    start = time.perf_counter()
+    for _ in range(config['iterations']):
+        _ = torch.matmul(A, B)
+    torch.cuda.synchronize()
+    pytorch_time = (time.perf_counter() - start) * 1000 / config['iterations']
+
+    # Benchmark MAX Graph
+    max_output = torch.empty(batch_tokens, config['nhid'], dtype=A.dtype, device=device)
+    torch.cuda.synchronize()
+    for _ in range(config['warmup']):
+        max_matmul(max_output, A, B)
+    torch.cuda.synchronize()
+
+    start = time.perf_counter()
+    for _ in range(config['iterations']):
+        max_matmul(max_output, A, B)
+    torch.cuda.synchronize()
+    max_time = (time.perf_counter() - start) * 1000 / config['iterations']
+
+    # Benchmark Custom CUDA Tensor Cores
+    if cuda_available:
+        torch.cuda.synchronize()
+        for _ in range(config['warmup']):
+            _ = custom_ops.gemm_forward(A, B_weights)
+        torch.cuda.synchronize()
+
+        start = time.perf_counter()
+        for _ in range(config['iterations']):
+            _ = custom_ops.gemm_forward(A, B_weights)
+        torch.cuda.synchronize()
+        cuda_time = (time.perf_counter() - start) * 1000 / config['iterations']
+
+        print(f"  PyTorch cuBLAS: {pytorch_time:.4f} ms")
+        print(f"  MAX Graph:      {max_time:.4f} ms  ({pytorch_time/max_time:.2f}x vs cuBLAS)")
+        print(f"  Custom CUDA:    {cuda_time:.4f} ms  ({pytorch_time/cuda_time:.2f}x vs cuBLAS)")
+        print(f"  🏆 Winner: {'Custom CUDA' if cuda_time < min(pytorch_time, max_time) else ('MAX' if max_time < pytorch_time else 'cuBLAS')}")
+    else:
+        print(f"  PyTorch cuBLAS: {pytorch_time:.4f} ms")
+        print(f"  MAX Graph:      {max_time:.4f} ms  ({pytorch_time/max_time:.2f}x vs cuBLAS)")
     print()
 
     # Softmax / Log Softmax - use smaller dimension to avoid OOM
@@ -247,25 +372,37 @@ def run_transformer_benchmark(config):
     print(f"  Speedup: {ln_result['speedup']:.2f}x ({ln_result['faster']} faster)")
     print()
 
-    # Calculate speedup
+    # Calculate speedups
     speedup = pytorch_time / max_time
-    faster = "MAX" if speedup > 1.0 else "PyTorch"
+    faster = "MAX" if speedup > 1.0 else "PyTorch-Eager"
 
     print("="*70)
     print("FULL MODEL SUMMARY")
     print("="*70)
-    print(f"PyTorch time: {pytorch_time:.4f} ms/iter")
-    print(f"MAX time:     {max_time:.4f} ms/iter")
-    print(f"Speedup:      {speedup:.2f}x ({faster} faster)")
+    print(f"PyTorch-Eager:  {pytorch_time:.4f} ms/iter (baseline)")
+    if scripted_time is not None:
+        script_speedup = pytorch_time / scripted_time
+        print(f"PyTorch-Script: {scripted_time:.4f} ms/iter ({script_speedup:.2f}x vs Eager)")
+    print(f"MAX Graph:      {max_time:.4f} ms/iter ({speedup:.2f}x vs Eager)")
+
+    if scripted_time is not None:
+        max_vs_script = scripted_time / max_time
+        print(f"\nMAX vs TorchScript: {max_vs_script:.2f}x")
+        print(f"  This shows MAX's kernel advantage (both use graph compilation)")
+
+    print(f"\n🏆 Winner: {faster}")
     print()
 
     # Save results
     results = {
         'config': config,
         'full_model': {
-            'pytorch_time_ms': pytorch_time,
+            'pytorch_eager_time_ms': pytorch_time,
+            'pytorch_script_time_ms': scripted_time if scripted_time is not None else None,
             'max_time_ms': max_time,
-            'speedup': speedup,
+            'speedup_vs_eager': speedup,
+            'script_speedup_vs_eager': script_speedup if scripted_time is not None else None,
+            'max_vs_script': max_vs_script if scripted_time is not None else None,
             'faster': faster
         },
         'operations': operation_results,

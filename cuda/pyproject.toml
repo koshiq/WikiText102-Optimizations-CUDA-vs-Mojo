@@ -1,0 +1,10 @@
+[build-system]
+requires = ["setuptools", "wheel", "torch", "ninja"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "custom_ops"
+version = "0.1.0"
+description = "Custom CUDA operations for PyTorch"
+requires-python = ">=3.8"
+dependencies = ["torch"]
